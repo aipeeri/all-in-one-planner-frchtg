@@ -64,6 +64,24 @@ export const appointments = pgTable('appointments', {
   index('appointments_date_idx').on(table.date),
 ]);
 
+// ===== DIET PLANS TABLE =====
+export const dietPlans = pgTable('diet_plans', {
+  id: uuid('id').primaryKey().defaultRandom(),
+  userId: text('user_id').notNull().references(() => user.id, { onDelete: 'cascade' }),
+  name: text('name').notNull(),
+  goal: text('goal', { enum: ['lose weight', 'gain muscle', 'maintain', 'custom'] }).notNull(),
+  dailyCalorieTarget: integer('daily_calorie_target'),
+  dailyProteinTarget: integer('daily_protein_target'), // in grams
+  dailyWaterTarget: integer('daily_water_target'), // in ml
+  notes: text('notes'),
+  isActive: boolean('is_active').default(false),
+  createdAt: timestamp('created_at').defaultNow().notNull(),
+  updatedAt: timestamp('updated_at').defaultNow().$onUpdate(() => new Date()).notNull(),
+}, (table) => [
+  index('diet_plans_user_id_idx').on(table.userId),
+  index('diet_plans_is_active_idx').on(table.isActive),
+]);
+
 // ===== DIET ENTRIES TABLE =====
 export const dietEntries = pgTable('diet_entries', {
   id: uuid('id').primaryKey().defaultRandom(),
@@ -118,6 +136,13 @@ export const noteMediaRelations = relations(noteMedia, ({ one }) => ({
 export const appointmentsRelations = relations(appointments, ({ one }) => ({
   user: one(user, {
     fields: [appointments.userId],
+    references: [user.id],
+  }),
+}));
+
+export const dietPlansRelations = relations(dietPlans, ({ one }) => ({
+  user: one(user, {
+    fields: [dietPlans.userId],
     references: [user.id],
   }),
 }));

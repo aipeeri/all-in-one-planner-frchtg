@@ -6,6 +6,8 @@ import { registerNotesRoutes } from './routes/notes.js';
 import { registerMediaRoutes } from './routes/media.js';
 import { registerAppointmentRoutes } from './routes/appointments.js';
 import { registerDietRoutes } from './routes/diet.js';
+import { registerDietPlanRoutes } from './routes/diet-plans.js';
+import { registerCalendarRoutes } from './routes/calendar.js';
 
 // Combine app schema with auth schema
 const schema = { ...appSchema, ...authSchema };
@@ -28,6 +30,8 @@ registerNotesRoutes(app);
 registerMediaRoutes(app);
 registerAppointmentRoutes(app);
 registerDietRoutes(app);
+registerDietPlanRoutes(app);
+registerCalendarRoutes(app);
 
 await app.run();
 app.logger.info('Application running with all routes registered');
