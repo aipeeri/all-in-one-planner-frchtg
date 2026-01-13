@@ -15,7 +15,6 @@ import {
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { IconSymbol } from '@/components/IconSymbol';
 import { colors } from '@/constants/Colors';
-import DateTimePicker from '@react-native-community/datetimepicker';
 import { authenticatedGet, authenticatedPost, authenticatedPut, authenticatedDelete } from '@/utils/api';
 
 interface Appointment {
@@ -40,24 +39,33 @@ interface DietEntry {
   createdAt: string;
 }
 
-interface DietFolder {
+interface DietPlan {
   id: string;
   name: string;
-  type: string;
-  color?: string;
-  icon?: string;
+  goal: string;
+  dailyCalorieTarget?: number;
+  dailyProteinTarget?: number;
+  dailyWaterTarget?: number;
+  notes?: string;
+  isActive: boolean;
+  createdAt: string;
+  updatedAt: string;
 }
 
+const DAYS_OF_WEEK = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
+const MONTHS = ['January', 'February', 'March', 'April', 'May', 'June', 'July', 'August', 'September', 'October', 'November', 'December'];
+
 export default function CalendarScreen() {
-  console.log('CalendarScreen: Rendering calendar and diet screen');
+  console.log('CalendarScreen: Rendering calendar screen');
   
+  const [currentMonth, setCurrentMonth] = useState(new Date());
   const [selectedDate, setSelectedDate] = useState(new Date());
   const [appointments, setAppointments] = useState<Appointment[]>([]);
   const [dietEntries, setDietEntries] = useState<DietEntry[]>([]);
-  const [dietFolders, setDietFolders] = useState<DietFolder[]>([]);
+  const [activeDietPlan, setActiveDietPlan] = useState<DietPlan | null>(null);
   const [showNewAppointmentModal, setShowNewAppointmentModal] = useState(false);
   const [showNewDietModal, setShowNewDietModal] = useState(false);
-  const [showDatePicker, setShowDatePicker] = useState(false);
+  const [showDietPlanSetup, setShowDietPlanSetup] = useState(false);
   const [loading, setLoading] = useState(true);
   const [activeTab, setActiveTab] = useState<'appointments' | 'diet'>('appointments');
 
@@ -73,11 +81,19 @@ export default function CalendarScreen() {
   const [newDietCalories, setNewDietCalories] = useState('');
   const [newDietNotes, setNewDietNotes] = useState('');
 
+  // Diet plan setup state
+  const [dietPlanName, setDietPlanName] = useState('');
+  const [dietPlanGoal, setDietPlanGoal] = useState('');
+  const [dietPlanCalories, setDietPlanCalories] = useState('');
+  const [dietPlanProtein, setDietPlanProtein] = useState('');
+  const [dietPlanWater, setDietPlanWater] = useState('');
+  const [dietPlanNotes, setDietPlanNotes] = useState('');
+
   useEffect(() => {
     console.log('CalendarScreen: Component mounted, loading data');
+    loadActiveDietPlan();
     loadAppointments();
     loadDietEntries();
-    loadDietFolders();
   }, []);
 
   useEffect(() => {
@@ -85,6 +101,18 @@ export default function CalendarScreen() {
     loadAppointments();
     loadDietEntries();
   }, [selectedDate]);
+
+  const loadActiveDietPlan = async () => {
+    console.log('CalendarScreen: Loading active diet plan');
+    try {
+      const data = await authenticatedGet<DietPlan>('/api/diet-plans/active');
+      console.log('CalendarScreen: Loaded active diet plan:', data);
+      setActiveDietPlan(data);
+    } catch (error) {
+      console.log('CalendarScreen: No active diet plan found');
+      setActiveDietPlan(null);
+    }
+  };
 
   const loadAppointments = async () => {
     console.log('CalendarScreen: Loading appointments from API');
@@ -97,7 +125,6 @@ export default function CalendarScreen() {
       setAppointments(data);
     } catch (error) {
       console.error('CalendarScreen: Failed to load appointments:', error);
-      Alert.alert('Error', 'Failed to load appointments. Please try again.');
     } finally {
       setLoading(false);
     }
@@ -114,19 +141,6 @@ export default function CalendarScreen() {
       setDietEntries(data);
     } catch (error) {
       console.error('CalendarScreen: Failed to load diet entries:', error);
-      Alert.alert('Error', 'Failed to load diet entries. Please try again.');
-    }
-  };
-
-  const loadDietFolders = async () => {
-    console.log('CalendarScreen: Loading diet folders from API');
-    try {
-      const data = await authenticatedGet<DietFolder[]>('/api/folders?type=diet');
-      console.log('CalendarScreen: Loaded diet folders:', data);
-      setDietFolders(data);
-    } catch (error) {
-      console.error('CalendarScreen: Failed to load diet folders:', error);
-      // Don't show error alert for folders as it's not critical
     }
   };
 
@@ -148,8 +162,6 @@ export default function CalendarScreen() {
       if (newAppointmentLocation.trim()) {
         appointmentData.location = newAppointmentLocation;
       }
-      // Note: time is stored in the description or as part of the date field
-      // The backend expects ISO date string
       
       const newAppointment = await authenticatedPost<Appointment>('/api/appointments', appointmentData);
       console.log('CalendarScreen: Created appointment:', newAppointment);
@@ -159,7 +171,6 @@ export default function CalendarScreen() {
       setNewAppointmentTime('');
       setNewAppointmentLocation('');
       setShowNewAppointmentModal(false);
-      Alert.alert('Success', 'Appointment created successfully!');
     } catch (error) {
       console.error('CalendarScreen: Failed to create appointment:', error);
       Alert.alert('Error', 'Failed to create appointment. Please try again.');
@@ -193,46 +204,113 @@ export default function CalendarScreen() {
       setNewDietCalories('');
       setNewDietNotes('');
       setShowNewDietModal(false);
-      Alert.alert('Success', 'Diet entry added successfully!');
     } catch (error) {
       console.error('CalendarScreen: Failed to create diet entry:', error);
       Alert.alert('Error', 'Failed to create diet entry. Please try again.');
     }
   };
 
-  const formatDate = (date: Date) => {
-    return date.toLocaleDateString('en-US', {
-      weekday: 'long',
-      year: 'numeric',
-      month: 'long',
-      day: 'numeric',
-    });
+  const createDietPlan = async () => {
+    if (!dietPlanName.trim() || !dietPlanGoal.trim()) {
+      Alert.alert('Error', 'Please enter a plan name and goal');
+      return;
+    }
+    console.log('CalendarScreen: Creating diet plan:', dietPlanName);
+    try {
+      const planData: any = {
+        name: dietPlanName,
+        goal: dietPlanGoal,
+      };
+      if (dietPlanCalories.trim()) {
+        planData.dailyCalorieTarget = parseInt(dietPlanCalories, 10);
+      }
+      if (dietPlanProtein.trim()) {
+        planData.dailyProteinTarget = parseInt(dietPlanProtein, 10);
+      }
+      if (dietPlanWater.trim()) {
+        planData.dailyWaterTarget = parseInt(dietPlanWater, 10);
+      }
+      if (dietPlanNotes.trim()) {
+        planData.notes = dietPlanNotes;
+      }
+      
+      const newPlan = await authenticatedPost<DietPlan>('/api/diet-plans', planData);
+      console.log('CalendarScreen: Created diet plan:', newPlan);
+      setActiveDietPlan(newPlan);
+      setDietPlanName('');
+      setDietPlanGoal('');
+      setDietPlanCalories('');
+      setDietPlanProtein('');
+      setDietPlanWater('');
+      setDietPlanNotes('');
+      setShowDietPlanSetup(false);
+    } catch (error) {
+      console.error('CalendarScreen: Failed to create diet plan:', error);
+      Alert.alert('Error', 'Failed to create diet plan. Please try again.');
+    }
   };
 
-  const changeDate = (days: number) => {
-    const newDate = new Date(selectedDate);
-    newDate.setDate(newDate.getDate() + days);
-    console.log('CalendarScreen: User changed date by', days, 'days');
-    setSelectedDate(newDate);
+  const getDaysInMonth = (date: Date) => {
+    const year = date.getFullYear();
+    const month = date.getMonth();
+    const firstDay = new Date(year, month, 1);
+    const lastDay = new Date(year, month + 1, 0);
+    const daysInMonth = lastDay.getDate();
+    const startingDayOfWeek = firstDay.getDay();
+    
+    const days: (Date | null)[] = [];
+    
+    // Add empty slots for days before the first day of the month
+    for (let i = 0; i < startingDayOfWeek; i++) {
+      days.push(null);
+    }
+    
+    // Add all days of the month
+    for (let day = 1; day <= daysInMonth; day++) {
+      days.push(new Date(year, month, day));
+    }
+    
+    return days;
+  };
+
+  const changeMonth = (direction: number) => {
+    const newMonth = new Date(currentMonth);
+    newMonth.setMonth(newMonth.getMonth() + direction);
+    console.log('CalendarScreen: User changed month:', direction > 0 ? 'next' : 'previous');
+    setCurrentMonth(newMonth);
+  };
+
+  const isToday = (date: Date | null) => {
+    if (!date) return false;
+    const today = new Date();
+    return date.getDate() === today.getDate() &&
+           date.getMonth() === today.getMonth() &&
+           date.getFullYear() === today.getFullYear();
+  };
+
+  const isSelectedDate = (date: Date | null) => {
+    if (!date) return false;
+    return date.getDate() === selectedDate.getDate() &&
+           date.getMonth() === selectedDate.getMonth() &&
+           date.getFullYear() === selectedDate.getFullYear();
+  };
+
+  const getTotalCalories = () => {
+    return dietEntries.reduce((sum, entry) => sum + (entry.calories || 0), 0);
   };
 
   const mealTypes = [
     { value: 'breakfast', label: 'Breakfast', icon: 'free-breakfast' },
     { value: 'lunch', label: 'Lunch', icon: 'restaurant' },
-    { value: 'dinner', label: 'dinner', icon: 'dinner-dining' },
+    { value: 'dinner', label: 'Dinner', icon: 'dinner-dining' },
     { value: 'snack', label: 'Snack', icon: 'fastfood' },
   ];
-
-  const getTotalCalories = () => {
-    return dietEntries.reduce((sum, entry) => sum + (entry.calories || 0), 0);
-  };
 
   if (loading) {
     return (
       <SafeAreaView style={styles.container} edges={['top']}>
         <View style={styles.loadingContainer}>
           <ActivityIndicator size="large" color={colors.primary} />
-          <Text style={styles.loadingText}>Loading...</Text>
         </View>
       </SafeAreaView>
     );
@@ -240,232 +318,249 @@ export default function CalendarScreen() {
 
   return (
     <SafeAreaView style={styles.container} edges={['top']}>
-      <View style={styles.header}>
-        <Text style={styles.headerTitle}>Calendar & Diet</Text>
-      </View>
+      <ScrollView style={styles.scrollView} contentContainerStyle={styles.scrollContent}>
+        {/* Header */}
+        <View style={styles.header}>
+          <Text style={styles.headerTitle}>Calendar</Text>
+        </View>
 
-      {/* Date Selector */}
-      <View style={styles.dateSelector}>
-        <TouchableOpacity
-          style={styles.dateButton}
-          onPress={() => {
-            console.log('CalendarScreen: User tapped previous day');
-            changeDate(-1);
-          }}
-        >
-          <IconSymbol
-            ios_icon_name="chevron.left"
-            android_material_icon_name="chevron-left"
-            size={24}
-            color={colors.text}
-          />
-        </TouchableOpacity>
-        <TouchableOpacity
-          style={styles.dateDisplay}
-          onPress={() => {
-            console.log('CalendarScreen: User tapped date picker');
-            setShowDatePicker(true);
-          }}
-        >
-          <IconSymbol
-            ios_icon_name="calendar"
-            android_material_icon_name="calendar-today"
-            size={20}
-            color={colors.primary}
-          />
-          <Text style={styles.dateText}>{formatDate(selectedDate)}</Text>
-        </TouchableOpacity>
-        <TouchableOpacity
-          style={styles.dateButton}
-          onPress={() => {
-            console.log('CalendarScreen: User tapped next day');
-            changeDate(1);
-          }}
-        >
-          <IconSymbol
-            ios_icon_name="chevron.right"
-            android_material_icon_name="chevron-right"
-            size={24}
-            color={colors.text}
-          />
-        </TouchableOpacity>
-      </View>
-
-      {/* Tab Selector */}
-      <View style={styles.tabSelector}>
-        <TouchableOpacity
-          style={[styles.tab, activeTab === 'appointments' && styles.tabActive]}
-          onPress={() => {
-            console.log('CalendarScreen: User switched to appointments tab');
-            setActiveTab('appointments');
-          }}
-        >
-          <IconSymbol
-            ios_icon_name="calendar"
-            android_material_icon_name="event"
-            size={20}
-            color={activeTab === 'appointments' ? colors.backgroundAlt : colors.textSecondary}
-          />
-          <Text
-            style={[
-              styles.tabText,
-              activeTab === 'appointments' && styles.tabTextActive,
-            ]}
+        {/* Month Navigation */}
+        <View style={styles.monthNav}>
+          <TouchableOpacity
+            style={styles.monthButton}
+            onPress={() => changeMonth(-1)}
           >
-            Appointments
+            <IconSymbol
+              ios_icon_name="chevron.left"
+              android_material_icon_name="chevron-left"
+              size={24}
+              color={colors.text}
+            />
+          </TouchableOpacity>
+          <Text style={styles.monthTitle}>
+            {MONTHS[currentMonth.getMonth()]} {currentMonth.getFullYear()}
           </Text>
-        </TouchableOpacity>
-        <TouchableOpacity
-          style={[styles.tab, activeTab === 'diet' && styles.tabActive]}
-          onPress={() => {
-            console.log('CalendarScreen: User switched to diet tab');
-            setActiveTab('diet');
-          }}
-        >
-          <IconSymbol
-            ios_icon_name="fork.knife"
-            android_material_icon_name="restaurant"
-            size={20}
-            color={activeTab === 'diet' ? colors.backgroundAlt : colors.textSecondary}
-          />
-          <Text style={[styles.tabText, activeTab === 'diet' && styles.tabTextActive]}>
-            Diet Plan
-          </Text>
-        </TouchableOpacity>
-      </View>
+          <TouchableOpacity
+            style={styles.monthButton}
+            onPress={() => changeMonth(1)}
+          >
+            <IconSymbol
+              ios_icon_name="chevron.right"
+              android_material_icon_name="chevron-right"
+              size={24}
+              color={colors.text}
+            />
+          </TouchableOpacity>
+        </View>
 
-      {/* Content */}
-      <ScrollView style={styles.content} contentContainerStyle={styles.contentContainer}>
+        {/* Calendar Grid */}
+        <View style={styles.calendar}>
+          {/* Day headers */}
+          <View style={styles.dayHeaders}>
+            {DAYS_OF_WEEK.map((day, index) => (
+              <View key={index} style={styles.dayHeader}>
+                <Text style={styles.dayHeaderText}>{day}</Text>
+              </View>
+            ))}
+          </View>
+
+          {/* Calendar days */}
+          <View style={styles.daysGrid}>
+            {getDaysInMonth(currentMonth).map((day, index) => (
+              <TouchableOpacity
+                key={index}
+                style={[
+                  styles.dayCell,
+                  !day && styles.dayCellEmpty,
+                  isToday(day) && styles.dayCellToday,
+                  isSelectedDate(day) && styles.dayCellSelected,
+                ]}
+                disabled={!day}
+                onPress={() => {
+                  if (day) {
+                    console.log('CalendarScreen: User selected date:', day.toISOString());
+                    setSelectedDate(day);
+                  }
+                }}
+              >
+                {day && (
+                  <Text
+                    style={[
+                      styles.dayText,
+                      isToday(day) && styles.dayTextToday,
+                      isSelectedDate(day) && styles.dayTextSelected,
+                    ]}
+                  >
+                    {day.getDate()}
+                  </Text>
+                )}
+              </TouchableOpacity>
+            ))}
+          </View>
+        </View>
+
+        {/* Selected Date Display */}
+        <View style={styles.selectedDateHeader}>
+          <Text style={styles.selectedDateText}>
+            {selectedDate.toLocaleDateString('en-US', {
+              weekday: 'long',
+              month: 'long',
+              day: 'numeric',
+            })}
+          </Text>
+        </View>
+
+        {/* Tab Selector */}
+        <View style={styles.tabSelector}>
+          <TouchableOpacity
+            style={[styles.tab, activeTab === 'appointments' && styles.tabActive]}
+            onPress={() => {
+              console.log('CalendarScreen: User switched to appointments tab');
+              setActiveTab('appointments');
+            }}
+          >
+            <Text
+              style={[
+                styles.tabText,
+                activeTab === 'appointments' && styles.tabTextActive,
+              ]}
+            >
+              Appointments
+            </Text>
+          </TouchableOpacity>
+          <TouchableOpacity
+            style={[styles.tab, activeTab === 'diet' && styles.tabActive]}
+            onPress={() => {
+              console.log('CalendarScreen: User switched to diet tab');
+              setActiveTab('diet');
+            }}
+          >
+            <Text style={[styles.tabText, activeTab === 'diet' && styles.tabTextActive]}>
+              Diet
+            </Text>
+          </TouchableOpacity>
+        </View>
+
+        {/* Content */}
         {activeTab === 'appointments' ? (
-          <>
+          <View style={styles.content}>
             {appointments.length === 0 ? (
               <View style={styles.emptyState}>
                 <IconSymbol
                   ios_icon_name="calendar"
                   android_material_icon_name="event"
-                  size={64}
+                  size={48}
                   color={colors.border}
                 />
                 <Text style={styles.emptyStateText}>No appointments</Text>
-                <Text style={styles.emptyStateSubtext}>
-                  Tap the + button to add an appointment
-                </Text>
               </View>
             ) : (
               appointments.map((appointment, index) => (
-                <React.Fragment key={index}>
-                  <TouchableOpacity
-                    key={appointment.id}
-                    style={styles.appointmentCard}
-                    onPress={() => {
-                      console.log('CalendarScreen: User tapped appointment:', appointment.title);
-                      Alert.alert(
-                        appointment.title,
-                        `${appointment.description || ''}\n\n${appointment.time || ''}\n${appointment.location || ''}`
-                      );
-                    }}
-                  >
-                    <View style={styles.appointmentHeader}>
-                      <View style={styles.appointmentIcon}>
-                        <IconSymbol
-                          ios_icon_name="calendar"
-                          android_material_icon_name="event"
-                          size={24}
-                          color={colors.primary}
-                        />
-                      </View>
-                      <View style={styles.appointmentInfo}>
-                        <Text style={styles.appointmentTitle}>{appointment.title}</Text>
-                        {appointment.time && (
-                          <Text style={styles.appointmentTime}>{appointment.time}</Text>
-                        )}
-                        {appointment.location && (
-                          <View style={styles.locationRow}>
-                            <IconSymbol
-                              ios_icon_name="location"
-                              android_material_icon_name="location-on"
-                              size={14}
-                              color={colors.textSecondary}
-                            />
-                            <Text style={styles.appointmentLocation}>
-                              {appointment.location}
-                            </Text>
-                          </View>
-                        )}
-                      </View>
+                <View key={index} style={styles.appointmentCard}>
+                  <Text style={styles.appointmentTitle}>{appointment.title}</Text>
+                  {appointment.description && (
+                    <Text style={styles.appointmentDescription}>{appointment.description}</Text>
+                  )}
+                  {appointment.location && (
+                    <View style={styles.locationRow}>
+                      <IconSymbol
+                        ios_icon_name="location"
+                        android_material_icon_name="location-on"
+                        size={14}
+                        color={colors.textSecondary}
+                      />
+                      <Text style={styles.appointmentLocation}>{appointment.location}</Text>
                     </View>
-                  </TouchableOpacity>
-                </React.Fragment>
+                  )}
+                </View>
               ))
             )}
-          </>
+          </View>
         ) : (
-          <>
-            {/* Calorie Summary */}
-            {dietEntries.length > 0 && (
-              <View style={styles.calorieCard}>
-                <Text style={styles.calorieLabel}>Total Calories</Text>
-                <Text style={styles.calorieValue}>{getTotalCalories()}</Text>
-                <Text style={styles.calorieUnit}>kcal</Text>
-              </View>
-            )}
-
-            {/* Diet Entries by Meal Type */}
-            {mealTypes.map((mealType, mealIndex) => {
-              const mealEntries = dietEntries.filter(
-                (entry) => entry.mealType === mealType.value
-              );
-              if (mealEntries.length === 0) return null;
-
-              return (
-                <React.Fragment key={mealIndex}>
-                  <View key={mealType.value} style={styles.mealSection}>
-                    <View style={styles.mealHeader}>
-                      <IconSymbol
-                        ios_icon_name="fork.knife"
-                        android_material_icon_name={mealType.icon}
-                        size={20}
-                        color={colors.primary}
-                      />
-                      <Text style={styles.mealTitle}>{mealType.label}</Text>
-                    </View>
-                    {mealEntries.map((entry, entryIndex) => (
-                      <React.Fragment key={entryIndex}>
-                        <View key={entry.id} style={styles.dietEntry}>
-                          <View style={styles.dietEntryInfo}>
-                            <Text style={styles.dietEntryName}>{entry.foodName}</Text>
-                            {entry.notes && (
-                              <Text style={styles.dietEntryNotes}>{entry.notes}</Text>
-                            )}
-                          </View>
-                          {entry.calories && (
-                            <Text style={styles.dietEntryCalories}>
-                              {entry.calories} kcal
-                            </Text>
-                          )}
-                        </View>
-                      </React.Fragment>
-                    ))}
-                  </View>
-                </React.Fragment>
-              );
-            })}
-
-            {dietEntries.length === 0 && (
+          <View style={styles.content}>
+            {!activeDietPlan ? (
               <View style={styles.emptyState}>
                 <IconSymbol
                   ios_icon_name="fork.knife"
                   android_material_icon_name="restaurant"
-                  size={64}
+                  size={48}
                   color={colors.border}
                 />
-                <Text style={styles.emptyStateText}>No diet entries</Text>
-                <Text style={styles.emptyStateSubtext}>
-                  Tap the + button to log your meals
-                </Text>
+                <Text style={styles.emptyStateText}>No diet plan</Text>
+                <Text style={styles.emptyStateSubtext}>Create a diet plan to start tracking</Text>
+                <TouchableOpacity
+                  style={styles.setupButton}
+                  onPress={() => {
+                    console.log('CalendarScreen: User tapped setup diet plan');
+                    setShowDietPlanSetup(true);
+                  }}
+                >
+                  <Text style={styles.setupButtonText}>Setup Diet Plan</Text>
+                </TouchableOpacity>
               </View>
+            ) : (
+              <>
+                {/* Diet Plan Summary */}
+                <View style={styles.dietPlanCard}>
+                  <View style={styles.dietPlanHeader}>
+                    <View>
+                      <Text style={styles.dietPlanName}>{activeDietPlan.name}</Text>
+                      <Text style={styles.dietPlanGoal}>{activeDietPlan.goal}</Text>
+                    </View>
+                    <TouchableOpacity
+                      onPress={() => {
+                        console.log('CalendarScreen: User tapped edit diet plan');
+                        setShowDietPlanSetup(true);
+                      }}
+                    >
+                      <IconSymbol
+                        ios_icon_name="pencil"
+                        android_material_icon_name="edit"
+                        size={20}
+                        color={colors.primary}
+                      />
+                    </TouchableOpacity>
+                  </View>
+                  {activeDietPlan.dailyCalorieTarget && (
+                    <View style={styles.targetRow}>
+                      <Text style={styles.targetLabel}>Daily Target:</Text>
+                      <Text style={styles.targetValue}>
+                        {getTotalCalories()} / {activeDietPlan.dailyCalorieTarget} kcal
+                      </Text>
+                    </View>
+                  )}
+                </View>
+
+                {/* Diet Entries */}
+                {dietEntries.length === 0 ? (
+                  <View style={styles.emptyState}>
+                    <Text style={styles.emptyStateText}>No meals logged</Text>
+                  </View>
+                ) : (
+                  mealTypes.map((mealType, mealIndex) => {
+                    const mealEntries = dietEntries.filter(
+                      (entry) => entry.mealType === mealType.value
+                    );
+                    if (mealEntries.length === 0) return null;
+
+                    return (
+                      <View key={mealIndex} style={styles.mealSection}>
+                        <Text style={styles.mealTitle}>{mealType.label}</Text>
+                        {mealEntries.map((entry, entryIndex) => (
+                          <View key={entryIndex} style={styles.dietEntry}>
+                            <Text style={styles.dietEntryName}>{entry.foodName}</Text>
+                            {entry.calories && (
+                              <Text style={styles.dietEntryCalories}>{entry.calories} kcal</Text>
+                            )}
+                          </View>
+                        ))}
+                      </View>
+                    );
+                  })
+                )}
+              </>
             )}
-          </>
+          </View>
         )}
       </ScrollView>
 
@@ -477,44 +572,43 @@ export default function CalendarScreen() {
           if (activeTab === 'appointments') {
             setShowNewAppointmentModal(true);
           } else {
-            setShowNewDietModal(true);
+            if (!activeDietPlan) {
+              Alert.alert('Setup Required', 'Please setup your diet plan first');
+              setShowDietPlanSetup(true);
+            } else {
+              setShowNewDietModal(true);
+            }
           }
         }}
       >
         <IconSymbol
           ios_icon_name="plus"
           android_material_icon_name="add"
-          size={28}
+          size={24}
           color={colors.backgroundAlt}
         />
       </TouchableOpacity>
-
-      {/* Date Picker */}
-      {showDatePicker && (
-        <DateTimePicker
-          value={selectedDate}
-          mode="date"
-          display="default"
-          onChange={(event, date) => {
-            setShowDatePicker(false);
-            if (date) {
-              console.log('CalendarScreen: User selected date:', date.toISOString());
-              setSelectedDate(date);
-            }
-          }}
-        />
-      )}
 
       {/* New Appointment Modal */}
       <Modal
         visible={showNewAppointmentModal}
         transparent
-        animationType="fade"
+        animationType="slide"
         onRequestClose={() => setShowNewAppointmentModal(false)}
       >
         <View style={styles.modalOverlay}>
           <View style={styles.modalContent}>
-            <Text style={styles.modalTitle}>New Appointment</Text>
+            <View style={styles.modalHeader}>
+              <Text style={styles.modalTitle}>New Appointment</Text>
+              <TouchableOpacity onPress={() => setShowNewAppointmentModal(false)}>
+                <IconSymbol
+                  ios_icon_name="xmark"
+                  android_material_icon_name="close"
+                  size={24}
+                  color={colors.text}
+                />
+              </TouchableOpacity>
+            </View>
             <TextInput
               style={styles.input}
               placeholder="Title"
@@ -534,39 +628,14 @@ export default function CalendarScreen() {
             />
             <TextInput
               style={styles.input}
-              placeholder="Time (e.g., 2:00 PM)"
-              placeholderTextColor={colors.textSecondary}
-              value={newAppointmentTime}
-              onChangeText={setNewAppointmentTime}
-            />
-            <TextInput
-              style={styles.input}
               placeholder="Location"
               placeholderTextColor={colors.textSecondary}
               value={newAppointmentLocation}
               onChangeText={setNewAppointmentLocation}
             />
-            <View style={styles.modalButtons}>
-              <TouchableOpacity
-                style={[styles.modalButton, styles.modalButtonCancel]}
-                onPress={() => {
-                  console.log('CalendarScreen: User cancelled appointment creation');
-                  setShowNewAppointmentModal(false);
-                  setNewAppointmentTitle('');
-                  setNewAppointmentDescription('');
-                  setNewAppointmentTime('');
-                  setNewAppointmentLocation('');
-                }}
-              >
-                <Text style={styles.modalButtonTextCancel}>Cancel</Text>
-              </TouchableOpacity>
-              <TouchableOpacity
-                style={[styles.modalButton, styles.modalButtonCreate]}
-                onPress={createAppointment}
-              >
-                <Text style={styles.modalButtonText}>Create</Text>
-              </TouchableOpacity>
-            </View>
+            <TouchableOpacity style={styles.primaryButton} onPress={createAppointment}>
+              <Text style={styles.primaryButtonText}>Create</Text>
+            </TouchableOpacity>
           </View>
         </View>
       </Modal>
@@ -575,48 +644,46 @@ export default function CalendarScreen() {
       <Modal
         visible={showNewDietModal}
         transparent
-        animationType="fade"
+        animationType="slide"
         onRequestClose={() => setShowNewDietModal(false)}
       >
         <View style={styles.modalOverlay}>
           <View style={styles.modalContent}>
-            <Text style={styles.modalTitle}>New Diet Entry</Text>
+            <View style={styles.modalHeader}>
+              <Text style={styles.modalTitle}>Log Meal</Text>
+              <TouchableOpacity onPress={() => setShowNewDietModal(false)}>
+                <IconSymbol
+                  ios_icon_name="xmark"
+                  android_material_icon_name="close"
+                  size={24}
+                  color={colors.text}
+                />
+              </TouchableOpacity>
+            </View>
             
             {/* Meal Type Selector */}
             <View style={styles.mealTypeSelector}>
               {mealTypes.map((mealType, index) => (
-                <React.Fragment key={index}>
-                  <TouchableOpacity
-                    key={mealType.value}
+                <TouchableOpacity
+                  key={index}
+                  style={[
+                    styles.mealTypeButton,
+                    newDietMealType === mealType.value && styles.mealTypeButtonActive,
+                  ]}
+                  onPress={() => {
+                    console.log('CalendarScreen: User selected meal type:', mealType.value);
+                    setNewDietMealType(mealType.value as any);
+                  }}
+                >
+                  <Text
                     style={[
-                      styles.mealTypeButton,
-                      newDietMealType === mealType.value && styles.mealTypeButtonActive,
+                      styles.mealTypeText,
+                      newDietMealType === mealType.value && styles.mealTypeTextActive,
                     ]}
-                    onPress={() => {
-                      console.log('CalendarScreen: User selected meal type:', mealType.value);
-                      setNewDietMealType(mealType.value as any);
-                    }}
                   >
-                    <IconSymbol
-                      ios_icon_name="fork.knife"
-                      android_material_icon_name={mealType.icon}
-                      size={20}
-                      color={
-                        newDietMealType === mealType.value
-                          ? colors.backgroundAlt
-                          : colors.textSecondary
-                      }
-                    />
-                    <Text
-                      style={[
-                        styles.mealTypeText,
-                        newDietMealType === mealType.value && styles.mealTypeTextActive,
-                      ]}
-                    >
-                      {mealType.label}
-                    </Text>
-                  </TouchableOpacity>
-                </React.Fragment>
+                    {mealType.label}
+                  </Text>
+                </TouchableOpacity>
               ))}
             </View>
 
@@ -630,7 +697,7 @@ export default function CalendarScreen() {
             />
             <TextInput
               style={styles.input}
-              placeholder="Calories (optional)"
+              placeholder="Calories"
               placeholderTextColor={colors.textSecondary}
               value={newDietCalories}
               onChangeText={setNewDietCalories}
@@ -645,27 +712,99 @@ export default function CalendarScreen() {
               multiline
               numberOfLines={2}
             />
-            <View style={styles.modalButtons}>
-              <TouchableOpacity
-                style={[styles.modalButton, styles.modalButtonCancel]}
-                onPress={() => {
-                  console.log('CalendarScreen: User cancelled diet entry creation');
-                  setShowNewDietModal(false);
-                  setNewDietFoodName('');
-                  setNewDietCalories('');
-                  setNewDietNotes('');
-                }}
-              >
-                <Text style={styles.modalButtonTextCancel}>Cancel</Text>
-              </TouchableOpacity>
-              <TouchableOpacity
-                style={[styles.modalButton, styles.modalButtonCreate]}
-                onPress={createDietEntry}
-              >
-                <Text style={styles.modalButtonText}>Add</Text>
+            <TouchableOpacity style={styles.primaryButton} onPress={createDietEntry}>
+              <Text style={styles.primaryButtonText}>Add</Text>
+            </TouchableOpacity>
+          </View>
+        </View>
+      </Modal>
+
+      {/* Diet Plan Setup Modal */}
+      <Modal
+        visible={showDietPlanSetup}
+        transparent
+        animationType="slide"
+        onRequestClose={() => setShowDietPlanSetup(false)}
+      >
+        <View style={styles.modalOverlay}>
+          <ScrollView contentContainerStyle={styles.modalScrollContent}>
+            <View style={styles.modalContent}>
+              <View style={styles.modalHeader}>
+                <Text style={styles.modalTitle}>Diet Plan Setup</Text>
+                <TouchableOpacity onPress={() => setShowDietPlanSetup(false)}>
+                  <IconSymbol
+                    ios_icon_name="xmark"
+                    android_material_icon_name="close"
+                    size={24}
+                    color={colors.text}
+                  />
+                </TouchableOpacity>
+              </View>
+              
+              <Text style={styles.inputLabel}>Plan Name</Text>
+              <TextInput
+                style={styles.input}
+                placeholder="e.g., Weight Loss Plan"
+                placeholderTextColor={colors.textSecondary}
+                value={dietPlanName}
+                onChangeText={setDietPlanName}
+              />
+              
+              <Text style={styles.inputLabel}>Goal</Text>
+              <TextInput
+                style={styles.input}
+                placeholder="e.g., Lose weight, Gain muscle, Maintain"
+                placeholderTextColor={colors.textSecondary}
+                value={dietPlanGoal}
+                onChangeText={setDietPlanGoal}
+              />
+              
+              <Text style={styles.inputLabel}>Daily Calorie Target (optional)</Text>
+              <TextInput
+                style={styles.input}
+                placeholder="e.g., 2000"
+                placeholderTextColor={colors.textSecondary}
+                value={dietPlanCalories}
+                onChangeText={setDietPlanCalories}
+                keyboardType="numeric"
+              />
+              
+              <Text style={styles.inputLabel}>Daily Protein Target (g, optional)</Text>
+              <TextInput
+                style={styles.input}
+                placeholder="e.g., 150"
+                placeholderTextColor={colors.textSecondary}
+                value={dietPlanProtein}
+                onChangeText={setDietPlanProtein}
+                keyboardType="numeric"
+              />
+              
+              <Text style={styles.inputLabel}>Daily Water Target (ml, optional)</Text>
+              <TextInput
+                style={styles.input}
+                placeholder="e.g., 2000"
+                placeholderTextColor={colors.textSecondary}
+                value={dietPlanWater}
+                onChangeText={setDietPlanWater}
+                keyboardType="numeric"
+              />
+              
+              <Text style={styles.inputLabel}>Notes (optional)</Text>
+              <TextInput
+                style={[styles.input, styles.textArea]}
+                placeholder="Any additional notes about your diet plan"
+                placeholderTextColor={colors.textSecondary}
+                value={dietPlanNotes}
+                onChangeText={setDietPlanNotes}
+                multiline
+                numberOfLines={3}
+              />
+              
+              <TouchableOpacity style={styles.primaryButton} onPress={createDietPlan}>
+                <Text style={styles.primaryButtonText}>Save Plan</Text>
               </TouchableOpacity>
             </View>
-          </View>
+          </ScrollView>
         </View>
       </Modal>
     </SafeAreaView>
@@ -683,139 +822,174 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
     alignItems: 'center',
   },
-  loadingText: {
-    marginTop: 16,
-    fontSize: 16,
-    color: colors.textSecondary,
+  scrollView: {
+    flex: 1,
+  },
+  scrollContent: {
+    paddingBottom: 100,
   },
   header: {
     paddingHorizontal: 20,
-    paddingVertical: 16,
+    paddingTop: 16,
+    paddingBottom: 8,
   },
   headerTitle: {
-    fontSize: 28,
+    fontSize: 32,
     fontWeight: '700',
     color: colors.text,
+    letterSpacing: -0.5,
   },
-  dateSelector: {
+  monthNav: {
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-between',
     paddingHorizontal: 20,
-    paddingVertical: 12,
+    paddingVertical: 16,
   },
-  dateButton: {
+  monthButton: {
     padding: 8,
   },
-  dateDisplay: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    backgroundColor: colors.backgroundAlt,
-    paddingHorizontal: 16,
-    paddingVertical: 10,
-    borderRadius: 12,
-    gap: 8,
-    borderWidth: 1,
-    borderColor: colors.border,
+  monthTitle: {
+    fontSize: 18,
+    fontWeight: '600',
+    color: colors.text,
   },
-  dateText: {
-    fontSize: 14,
+  calendar: {
+    paddingHorizontal: 20,
+    marginBottom: 16,
+  },
+  dayHeaders: {
+    flexDirection: 'row',
+    marginBottom: 8,
+  },
+  dayHeader: {
+    flex: 1,
+    alignItems: 'center',
+    paddingVertical: 8,
+  },
+  dayHeaderText: {
+    fontSize: 12,
+    fontWeight: '600',
+    color: colors.textSecondary,
+  },
+  daysGrid: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+  },
+  dayCell: {
+    width: `${100 / 7}%`,
+    aspectRatio: 1,
+    alignItems: 'center',
+    justifyContent: 'center',
+    padding: 4,
+  },
+  dayCellEmpty: {
+    opacity: 0,
+  },
+  dayCellToday: {
+    backgroundColor: colors.highlight,
+    borderRadius: 8,
+  },
+  dayCellSelected: {
+    backgroundColor: colors.primary,
+    borderRadius: 8,
+  },
+  dayText: {
+    fontSize: 16,
+    color: colors.text,
+    fontWeight: '500',
+  },
+  dayTextToday: {
+    color: colors.primary,
+    fontWeight: '700',
+  },
+  dayTextSelected: {
+    color: colors.backgroundAlt,
+    fontWeight: '700',
+  },
+  selectedDateHeader: {
+    paddingHorizontal: 20,
+    paddingVertical: 12,
+    borderTopWidth: 1,
+    borderTopColor: colors.border,
+    backgroundColor: colors.backgroundAlt,
+  },
+  selectedDateText: {
+    fontSize: 16,
     fontWeight: '600',
     color: colors.text,
   },
   tabSelector: {
     flexDirection: 'row',
     paddingHorizontal: 20,
-    paddingVertical: 12,
+    paddingVertical: 16,
     gap: 12,
   },
   tab: {
     flex: 1,
-    flexDirection: 'row',
     alignItems: 'center',
-    justifyContent: 'center',
-    paddingVertical: 12,
-    borderRadius: 12,
+    paddingVertical: 10,
+    borderRadius: 8,
     backgroundColor: colors.backgroundAlt,
-    borderWidth: 1,
-    borderColor: colors.border,
-    gap: 8,
   },
   tabActive: {
     backgroundColor: colors.primary,
-    borderColor: colors.primary,
   },
   tabText: {
-    fontSize: 14,
+    fontSize: 15,
     fontWeight: '600',
-    color: colors.textSecondary,
+    color: colors.text,
   },
   tabTextActive: {
     color: colors.backgroundAlt,
   },
   content: {
-    flex: 1,
-  },
-  contentContainer: {
     paddingHorizontal: 20,
-    paddingTop: 8,
-    paddingBottom: 100,
   },
   emptyState: {
-    flex: 1,
-    justifyContent: 'center',
     alignItems: 'center',
-    paddingVertical: 60,
+    paddingVertical: 40,
   },
   emptyStateText: {
-    fontSize: 18,
+    fontSize: 16,
     fontWeight: '600',
     color: colors.text,
-    marginTop: 16,
+    marginTop: 12,
   },
   emptyStateSubtext: {
     fontSize: 14,
     color: colors.textSecondary,
-    marginTop: 8,
+    marginTop: 4,
     textAlign: 'center',
   },
+  setupButton: {
+    marginTop: 16,
+    backgroundColor: colors.primary,
+    paddingHorizontal: 24,
+    paddingVertical: 12,
+    borderRadius: 8,
+  },
+  setupButtonText: {
+    fontSize: 15,
+    fontWeight: '600',
+    color: colors.backgroundAlt,
+  },
   appointmentCard: {
-    backgroundColor: colors.card,
+    backgroundColor: colors.backgroundAlt,
     borderRadius: 12,
     padding: 16,
     marginBottom: 12,
-    borderWidth: 1,
-    borderColor: colors.border,
-    boxShadow: '0px 2px 4px rgba(0, 0, 0, 0.05)',
-    elevation: 1,
-  },
-  appointmentHeader: {
-    flexDirection: 'row',
-    alignItems: 'flex-start',
-    gap: 12,
-  },
-  appointmentIcon: {
-    width: 48,
-    height: 48,
-    borderRadius: 24,
-    backgroundColor: colors.highlight,
-    justifyContent: 'center',
-    alignItems: 'center',
-  },
-  appointmentInfo: {
-    flex: 1,
   },
   appointmentTitle: {
-    fontSize: 16,
+    fontSize: 17,
     fontWeight: '600',
     color: colors.text,
     marginBottom: 4,
   },
-  appointmentTime: {
+  appointmentDescription: {
     fontSize: 14,
-    color: colors.primary,
-    fontWeight: '500',
-    marginBottom: 4,
+    color: colors.textSecondary,
+    marginBottom: 8,
   },
   locationRow: {
     flexDirection: 'row',
@@ -826,71 +1000,63 @@ const styles = StyleSheet.create({
     fontSize: 13,
     color: colors.textSecondary,
   },
-  calorieCard: {
-    backgroundColor: colors.primary,
-    borderRadius: 16,
-    padding: 24,
-    alignItems: 'center',
-    marginBottom: 20,
-    boxShadow: '0px 4px 12px rgba(99, 102, 241, 0.2)',
-    elevation: 3,
+  dietPlanCard: {
+    backgroundColor: colors.backgroundAlt,
+    borderRadius: 12,
+    padding: 16,
+    marginBottom: 16,
   },
-  calorieLabel: {
-    fontSize: 14,
-    fontWeight: '500',
-    color: colors.backgroundAlt,
-    opacity: 0.9,
-    marginBottom: 8,
+  dietPlanHeader: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'flex-start',
+    marginBottom: 12,
   },
-  calorieValue: {
-    fontSize: 48,
+  dietPlanName: {
+    fontSize: 18,
     fontWeight: '700',
-    color: colors.backgroundAlt,
+    color: colors.text,
   },
-  calorieUnit: {
+  dietPlanGoal: {
+    fontSize: 14,
+    color: colors.textSecondary,
+    marginTop: 2,
+  },
+  targetRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+  },
+  targetLabel: {
+    fontSize: 14,
+    color: colors.textSecondary,
+  },
+  targetValue: {
     fontSize: 16,
-    fontWeight: '500',
-    color: colors.backgroundAlt,
-    opacity: 0.9,
-    marginTop: 4,
+    fontWeight: '600',
+    color: colors.primary,
   },
   mealSection: {
     marginBottom: 20,
   },
-  mealHeader: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 8,
-    marginBottom: 12,
-  },
   mealTitle: {
-    fontSize: 18,
+    fontSize: 16,
     fontWeight: '600',
     color: colors.text,
+    marginBottom: 8,
   },
   dietEntry: {
     flexDirection: 'row',
     justifyContent: 'space-between',
     alignItems: 'center',
-    backgroundColor: colors.card,
-    borderRadius: 12,
-    padding: 16,
-    marginBottom: 8,
-    borderWidth: 1,
-    borderColor: colors.border,
-  },
-  dietEntryInfo: {
-    flex: 1,
+    backgroundColor: colors.backgroundAlt,
+    borderRadius: 8,
+    padding: 12,
+    marginBottom: 6,
   },
   dietEntryName: {
-    fontSize: 16,
-    fontWeight: '500',
+    fontSize: 15,
     color: colors.text,
-    marginBottom: 4,
-  },
-  dietEntryNotes: {
-    fontSize: 13,
-    color: colors.textSecondary,
   },
   dietEntryCalories: {
     fontSize: 14,
@@ -907,38 +1073,53 @@ const styles = StyleSheet.create({
     backgroundColor: colors.primary,
     justifyContent: 'center',
     alignItems: 'center',
-    boxShadow: '0px 4px 12px rgba(99, 102, 241, 0.4)',
-    elevation: 6,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.3,
+    shadowRadius: 8,
+    elevation: 8,
   },
   modalOverlay: {
     flex: 1,
     backgroundColor: 'rgba(0, 0, 0, 0.5)',
-    justifyContent: 'center',
-    alignItems: 'center',
-    padding: 20,
+    justifyContent: 'flex-end',
+  },
+  modalScrollContent: {
+    flexGrow: 1,
+    justifyContent: 'flex-end',
   },
   modalContent: {
     backgroundColor: colors.backgroundAlt,
-    borderRadius: 16,
-    padding: 24,
-    width: '100%',
-    maxWidth: 400,
+    borderTopLeftRadius: 20,
+    borderTopRightRadius: 20,
+    padding: 20,
+    maxHeight: '90%',
+  },
+  modalHeader: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    marginBottom: 20,
   },
   modalTitle: {
-    fontSize: 20,
+    fontSize: 22,
     fontWeight: '700',
     color: colors.text,
-    marginBottom: 16,
+  },
+  inputLabel: {
+    fontSize: 14,
+    fontWeight: '600',
+    color: colors.text,
+    marginBottom: 8,
+    marginTop: 8,
   },
   input: {
     backgroundColor: colors.background,
-    borderRadius: 8,
-    padding: 12,
+    borderRadius: 10,
+    padding: 14,
     fontSize: 16,
     color: colors.text,
     marginBottom: 12,
-    borderWidth: 1,
-    borderColor: colors.border,
   },
   textArea: {
     height: 80,
@@ -951,54 +1132,32 @@ const styles = StyleSheet.create({
     marginBottom: 16,
   },
   mealTypeButton: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    paddingHorizontal: 12,
-    paddingVertical: 8,
+    paddingHorizontal: 16,
+    paddingVertical: 10,
     borderRadius: 20,
     backgroundColor: colors.background,
-    borderWidth: 1,
-    borderColor: colors.border,
-    gap: 6,
   },
   mealTypeButtonActive: {
     backgroundColor: colors.primary,
-    borderColor: colors.primary,
   },
   mealTypeText: {
-    fontSize: 13,
-    fontWeight: '500',
+    fontSize: 14,
+    fontWeight: '600',
     color: colors.text,
   },
   mealTypeTextActive: {
     color: colors.backgroundAlt,
   },
-  modalButtons: {
-    flexDirection: 'row',
-    gap: 12,
-  },
-  modalButton: {
-    flex: 1,
-    paddingVertical: 12,
-    borderRadius: 8,
-    alignItems: 'center',
-  },
-  modalButtonCancel: {
-    backgroundColor: colors.background,
-    borderWidth: 1,
-    borderColor: colors.border,
-  },
-  modalButtonCreate: {
+  primaryButton: {
     backgroundColor: colors.primary,
+    borderRadius: 10,
+    padding: 16,
+    alignItems: 'center',
+    marginTop: 8,
   },
-  modalButtonText: {
+  primaryButtonText: {
     fontSize: 16,
     fontWeight: '600',
     color: colors.backgroundAlt,
-  },
-  modalButtonTextCancel: {
-    fontSize: 16,
-    fontWeight: '600',
-    color: colors.text,
   },
 });

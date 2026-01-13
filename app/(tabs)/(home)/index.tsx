@@ -17,6 +17,7 @@ import { IconSymbol } from '@/components/IconSymbol';
 import { colors } from '@/constants/Colors';
 import * as ImagePicker from 'expo-image-picker';
 import { authenticatedGet, authenticatedPost, authenticatedPut, authenticatedDelete } from '@/utils/api';
+import { useRouter } from 'expo-router';
 
 interface Folder {
   id: string;
@@ -40,16 +41,21 @@ interface Note {
 }
 
 export default function NotesScreen() {
-  console.log('NotesScreen: Rendering notes and studies screen');
+  console.log('NotesScreen: Rendering notes screen');
   
+  const router = useRouter();
   const [folders, setFolders] = useState<Folder[]>([]);
   const [notes, setNotes] = useState<Note[]>([]);
   const [selectedFolder, setSelectedFolder] = useState<string | null>(null);
   const [showNewFolderModal, setShowNewFolderModal] = useState(false);
   const [showNewNoteModal, setShowNewNoteModal] = useState(false);
+  const [showNoteDetail, setShowNoteDetail] = useState(false);
+  const [selectedNote, setSelectedNote] = useState<Note | null>(null);
   const [newFolderName, setNewFolderName] = useState('');
   const [newNoteTitle, setNewNoteTitle] = useState('');
   const [newNoteContent, setNewNoteContent] = useState('');
+  const [editNoteTitle, setEditNoteTitle] = useState('');
+  const [editNoteContent, setEditNoteContent] = useState('');
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
@@ -75,7 +81,6 @@ export default function NotesScreen() {
       setFolders(data);
     } catch (error) {
       console.error('NotesScreen: Failed to load folders:', error);
-      Alert.alert('Error', 'Failed to load folders. Please try again.');
     } finally {
       setLoading(false);
     }
@@ -90,7 +95,6 @@ export default function NotesScreen() {
       setNotes(data);
     } catch (error) {
       console.error('NotesScreen: Failed to load notes:', error);
-      Alert.alert('Error', 'Failed to load notes. Please try again.');
     }
   };
 
@@ -109,7 +113,6 @@ export default function NotesScreen() {
       setFolders([...folders, newFolder]);
       setNewFolderName('');
       setShowNewFolderModal(false);
-      Alert.alert('Success', 'Folder created successfully!');
     } catch (error) {
       console.error('NotesScreen: Failed to create folder:', error);
       Alert.alert('Error', 'Failed to create folder. Please try again.');
@@ -136,27 +139,63 @@ export default function NotesScreen() {
       setNewNoteTitle('');
       setNewNoteContent('');
       setShowNewNoteModal(false);
-      Alert.alert('Success', 'Note created successfully!');
     } catch (error) {
       console.error('NotesScreen: Failed to create note:', error);
       Alert.alert('Error', 'Failed to create note. Please try again.');
     }
   };
 
-  const pickImage = async () => {
-    console.log('NotesScreen: User tapped pick image button');
-    const result = await ImagePicker.launchImageLibraryAsync({
-      mediaTypes: ['images', 'videos'],
-      allowsEditing: true,
-      quality: 1,
-    });
-
-    if (!result.canceled) {
-      console.log('NotesScreen: Image/video selected:', result.assets[0].uri);
-      Alert.alert('Info', 'Media upload will be available after creating the note. Create the note first, then you can add media to it.');
-      // Note: Media upload requires a noteId, so it should be done after note creation
-      // This would typically be implemented in a note detail/edit screen
+  const updateNote = async () => {
+    if (!selectedNote) return;
+    console.log('NotesScreen: Updating note:', selectedNote.id);
+    try {
+      const updatedNote = await authenticatedPut<Note>(`/api/notes/${selectedNote.id}`, {
+        title: editNoteTitle,
+        content: editNoteContent,
+      });
+      console.log('NotesScreen: Updated note:', updatedNote);
+      setNotes(notes.map(n => n.id === updatedNote.id ? updatedNote : n));
+      setShowNoteDetail(false);
+      setSelectedNote(null);
+    } catch (error) {
+      console.error('NotesScreen: Failed to update note:', error);
+      Alert.alert('Error', 'Failed to update note. Please try again.');
     }
+  };
+
+  const deleteNote = async (noteId: string) => {
+    console.log('NotesScreen: Deleting note:', noteId);
+    Alert.alert(
+      'Delete Note',
+      'Are you sure you want to delete this note?',
+      [
+        { text: 'Cancel', style: 'cancel' },
+        {
+          text: 'Delete',
+          style: 'destructive',
+          onPress: async () => {
+            try {
+              await authenticatedDelete(`/api/notes/${noteId}`);
+              console.log('NotesScreen: Deleted note:', noteId);
+              setNotes(notes.filter(n => n.id !== noteId));
+              setShowNoteDetail(false);
+              setSelectedNote(null);
+            } catch (error) {
+              console.error('NotesScreen: Failed to delete note:', error);
+              Alert.alert('Error', 'Failed to delete note. Please try again.');
+            }
+          },
+        },
+      ]
+    );
+  };
+
+  const openNoteDetail = (note: Note) => {
+    console.log('NotesScreen: Opening note detail:', note.title);
+    setSelectedNote(note);
+    setEditNoteTitle(note.title);
+    setEditNoteContent(note.content);
+    setShowNoteDetail(true);
   };
 
   if (loading) {
@@ -164,7 +203,6 @@ export default function NotesScreen() {
       <SafeAreaView style={styles.container} edges={['top']}>
         <View style={styles.loadingContainer}>
           <ActivityIndicator size="large" color={colors.primary} />
-          <Text style={styles.loadingText}>Loading...</Text>
         </View>
       </SafeAreaView>
     );
@@ -173,7 +211,7 @@ export default function NotesScreen() {
   return (
     <SafeAreaView style={styles.container} edges={['top']}>
       <View style={styles.header}>
-        <Text style={styles.headerTitle}>Notes & Studies</Text>
+        <Text style={styles.headerTitle}>Notes</Text>
         <TouchableOpacity
           style={styles.addButton}
           onPress={() => {
@@ -207,12 +245,6 @@ export default function NotesScreen() {
             setSelectedFolder(null);
           }}
         >
-          <IconSymbol
-            ios_icon_name="folder"
-            android_material_icon_name="folder"
-            size={20}
-            color={!selectedFolder ? colors.backgroundAlt : colors.textSecondary}
-          />
           <Text
             style={[
               styles.folderChipText,
@@ -224,38 +256,26 @@ export default function NotesScreen() {
         </TouchableOpacity>
 
         {folders.map((folder, index) => (
-          <React.Fragment key={index}>
-            <TouchableOpacity
-              key={folder.id}
+          <TouchableOpacity
+            key={index}
+            style={[
+              styles.folderChip,
+              selectedFolder === folder.id && styles.folderChipActive,
+            ]}
+            onPress={() => {
+              console.log('NotesScreen: User selected folder:', folder.name);
+              setSelectedFolder(folder.id);
+            }}
+          >
+            <Text
               style={[
-                styles.folderChip,
-                selectedFolder === folder.id && styles.folderChipActive,
+                styles.folderChipText,
+                selectedFolder === folder.id && styles.folderChipTextActive,
               ]}
-              onPress={() => {
-                console.log('NotesScreen: User selected folder:', folder.name);
-                setSelectedFolder(folder.id);
-              }}
             >
-              <IconSymbol
-                ios_icon_name="folder.fill"
-                android_material_icon_name="folder"
-                size={20}
-                color={
-                  selectedFolder === folder.id
-                    ? colors.backgroundAlt
-                    : colors.textSecondary
-                }
-              />
-              <Text
-                style={[
-                  styles.folderChipText,
-                  selectedFolder === folder.id && styles.folderChipTextActive,
-                ]}
-              >
-                {folder.name}
-              </Text>
-            </TouchableOpacity>
-          </React.Fragment>
+              {folder.name}
+            </Text>
+          </TouchableOpacity>
         ))}
       </ScrollView>
 
@@ -269,7 +289,7 @@ export default function NotesScreen() {
             <IconSymbol
               ios_icon_name="note.text"
               android_material_icon_name="description"
-              size={64}
+              size={48}
               color={colors.border}
             />
             <Text style={styles.emptyStateText}>No notes yet</Text>
@@ -279,48 +299,21 @@ export default function NotesScreen() {
           </View>
         ) : (
           notes.map((note, index) => (
-            <React.Fragment key={index}>
-              <TouchableOpacity
-                key={note.id}
-                style={styles.noteCard}
-                onPress={() => {
-                  console.log('NotesScreen: User tapped note:', note.title);
-                  Alert.alert('Note', note.content || 'No content');
-                }}
-              >
-                <View style={styles.noteHeader}>
-                  <Text style={styles.noteTitle}>{note.title}</Text>
-                  {note.mediaCount && note.mediaCount > 0 && (
-                    <View style={styles.mediaBadge}>
-                      <IconSymbol
-                        ios_icon_name="photo"
-                        android_material_icon_name="image"
-                        size={16}
-                        color={colors.primary}
-                      />
-                      <Text style={styles.mediaBadgeText}>{note.mediaCount}</Text>
-                    </View>
-                  )}
-                </View>
-                {note.content && (
-                  <Text style={styles.noteContent} numberOfLines={2}>
-                    {note.content}
-                  </Text>
-                )}
-                {note.tags && note.tags.length > 0 && (
-                  <View style={styles.tagsContainer}>
-                    {note.tags.map((tag, tagIndex) => (
-                      <View key={tagIndex} style={styles.tag}>
-                        <Text style={styles.tagText}>#{tag}</Text>
-                      </View>
-                    ))}
-                  </View>
-                )}
-                <Text style={styles.noteDate}>
-                  {new Date(note.createdAt).toLocaleDateString()}
+            <TouchableOpacity
+              key={index}
+              style={styles.noteCard}
+              onPress={() => openNoteDetail(note)}
+            >
+              <Text style={styles.noteTitle}>{note.title}</Text>
+              {note.content && (
+                <Text style={styles.noteContent} numberOfLines={2}>
+                  {note.content}
                 </Text>
-              </TouchableOpacity>
-            </React.Fragment>
+              )}
+              <Text style={styles.noteDate}>
+                {new Date(note.createdAt).toLocaleDateString()}
+              </Text>
+            </TouchableOpacity>
           ))
         )}
       </ScrollView>
@@ -336,7 +329,7 @@ export default function NotesScreen() {
         <IconSymbol
           ios_icon_name="plus"
           android_material_icon_name="add"
-          size={28}
+          size={24}
           color={colors.backgroundAlt}
         />
       </TouchableOpacity>
@@ -345,12 +338,22 @@ export default function NotesScreen() {
       <Modal
         visible={showNewFolderModal}
         transparent
-        animationType="fade"
+        animationType="slide"
         onRequestClose={() => setShowNewFolderModal(false)}
       >
         <View style={styles.modalOverlay}>
           <View style={styles.modalContent}>
-            <Text style={styles.modalTitle}>New Folder</Text>
+            <View style={styles.modalHeader}>
+              <Text style={styles.modalTitle}>New Folder</Text>
+              <TouchableOpacity onPress={() => setShowNewFolderModal(false)}>
+                <IconSymbol
+                  ios_icon_name="xmark"
+                  android_material_icon_name="close"
+                  size={24}
+                  color={colors.text}
+                />
+              </TouchableOpacity>
+            </View>
             <TextInput
               style={styles.input}
               placeholder="Folder name"
@@ -359,24 +362,9 @@ export default function NotesScreen() {
               onChangeText={setNewFolderName}
               autoFocus
             />
-            <View style={styles.modalButtons}>
-              <TouchableOpacity
-                style={[styles.modalButton, styles.modalButtonCancel]}
-                onPress={() => {
-                  console.log('NotesScreen: User cancelled folder creation');
-                  setShowNewFolderModal(false);
-                  setNewFolderName('');
-                }}
-              >
-                <Text style={styles.modalButtonTextCancel}>Cancel</Text>
-              </TouchableOpacity>
-              <TouchableOpacity
-                style={[styles.modalButton, styles.modalButtonCreate]}
-                onPress={createFolder}
-              >
-                <Text style={styles.modalButtonText}>Create</Text>
-              </TouchableOpacity>
-            </View>
+            <TouchableOpacity style={styles.primaryButton} onPress={createFolder}>
+              <Text style={styles.primaryButtonText}>Create</Text>
+            </TouchableOpacity>
           </View>
         </View>
       </Modal>
@@ -385,12 +373,22 @@ export default function NotesScreen() {
       <Modal
         visible={showNewNoteModal}
         transparent
-        animationType="fade"
+        animationType="slide"
         onRequestClose={() => setShowNewNoteModal(false)}
       >
         <View style={styles.modalOverlay}>
-          <View style={styles.modalContent}>
-            <Text style={styles.modalTitle}>New Note</Text>
+          <View style={styles.modalContentLarge}>
+            <View style={styles.modalHeader}>
+              <Text style={styles.modalTitle}>New Note</Text>
+              <TouchableOpacity onPress={() => setShowNewNoteModal(false)}>
+                <IconSymbol
+                  ios_icon_name="xmark"
+                  android_material_icon_name="close"
+                  size={24}
+                  color={colors.text}
+                />
+              </TouchableOpacity>
+            </View>
             <TextInput
               style={styles.input}
               placeholder="Note title"
@@ -399,43 +397,78 @@ export default function NotesScreen() {
               onChangeText={setNewNoteTitle}
               autoFocus
             />
-            <TextInput
-              style={[styles.input, styles.textArea]}
-              placeholder="Note content"
-              placeholderTextColor={colors.textSecondary}
-              value={newNoteContent}
-              onChangeText={setNewNoteContent}
-              multiline
-              numberOfLines={4}
-            />
-            <TouchableOpacity style={styles.mediaButton} onPress={pickImage}>
-              <IconSymbol
-                ios_icon_name="photo"
-                android_material_icon_name="image"
-                size={20}
-                color={colors.primary}
+            <ScrollView style={styles.noteInputScroll}>
+              <TextInput
+                style={[styles.input, styles.largeTextArea]}
+                placeholder="Start writing your note... (supports Apple Pencil)"
+                placeholderTextColor={colors.textSecondary}
+                value={newNoteContent}
+                onChangeText={setNewNoteContent}
+                multiline
+                textAlignVertical="top"
               />
-              <Text style={styles.mediaButtonText}>Add Photo/Video</Text>
+            </ScrollView>
+            <TouchableOpacity style={styles.primaryButton} onPress={createNote}>
+              <Text style={styles.primaryButtonText}>Create</Text>
             </TouchableOpacity>
-            <View style={styles.modalButtons}>
-              <TouchableOpacity
-                style={[styles.modalButton, styles.modalButtonCancel]}
-                onPress={() => {
-                  console.log('NotesScreen: User cancelled note creation');
-                  setShowNewNoteModal(false);
-                  setNewNoteTitle('');
-                  setNewNoteContent('');
-                }}
-              >
-                <Text style={styles.modalButtonTextCancel}>Cancel</Text>
-              </TouchableOpacity>
-              <TouchableOpacity
-                style={[styles.modalButton, styles.modalButtonCreate]}
-                onPress={createNote}
-              >
-                <Text style={styles.modalButtonText}>Create</Text>
-              </TouchableOpacity>
+          </View>
+        </View>
+      </Modal>
+
+      {/* Note Detail Modal */}
+      <Modal
+        visible={showNoteDetail}
+        transparent
+        animationType="slide"
+        onRequestClose={() => setShowNoteDetail(false)}
+      >
+        <View style={styles.modalOverlay}>
+          <View style={styles.modalContentLarge}>
+            <View style={styles.modalHeader}>
+              <Text style={styles.modalTitle}>Edit Note</Text>
+              <View style={styles.modalActions}>
+                <TouchableOpacity
+                  style={styles.deleteButton}
+                  onPress={() => selectedNote && deleteNote(selectedNote.id)}
+                >
+                  <IconSymbol
+                    ios_icon_name="trash"
+                    android_material_icon_name="delete"
+                    size={22}
+                    color={colors.error}
+                  />
+                </TouchableOpacity>
+                <TouchableOpacity onPress={() => setShowNoteDetail(false)}>
+                  <IconSymbol
+                    ios_icon_name="xmark"
+                    android_material_icon_name="close"
+                    size={24}
+                    color={colors.text}
+                  />
+                </TouchableOpacity>
+              </View>
             </View>
+            <TextInput
+              style={styles.input}
+              placeholder="Note title"
+              placeholderTextColor={colors.textSecondary}
+              value={editNoteTitle}
+              onChangeText={setEditNoteTitle}
+            />
+            <ScrollView style={styles.noteInputScroll}>
+              <TextInput
+                style={[styles.input, styles.largeTextArea]}
+                placeholder="Note content (supports Apple Pencil)"
+                placeholderTextColor={colors.textSecondary}
+                value={editNoteContent}
+                onChangeText={setEditNoteContent}
+                multiline
+                textAlignVertical="top"
+              />
+            </ScrollView>
+            <TouchableOpacity style={styles.primaryButton} onPress={updateNote}>
+              <Text style={styles.primaryButtonText}>Save Changes</Text>
+            </TouchableOpacity>
           </View>
         </View>
       </Modal>
@@ -454,22 +487,19 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
     alignItems: 'center',
   },
-  loadingText: {
-    marginTop: 16,
-    fontSize: 16,
-    color: colors.textSecondary,
-  },
   header: {
     flexDirection: 'row',
     justifyContent: 'space-between',
     alignItems: 'center',
     paddingHorizontal: 20,
-    paddingVertical: 16,
+    paddingTop: 16,
+    paddingBottom: 8,
   },
   headerTitle: {
-    fontSize: 28,
+    fontSize: 32,
     fontWeight: '700',
     color: colors.text,
+    letterSpacing: -0.5,
   },
   addButton: {
     padding: 8,
@@ -479,28 +509,22 @@ const styles = StyleSheet.create({
   },
   foldersContent: {
     paddingHorizontal: 20,
-    paddingVertical: 8,
+    paddingVertical: 12,
     gap: 8,
   },
   folderChip: {
-    flexDirection: 'row',
-    alignItems: 'center',
     paddingHorizontal: 16,
     paddingVertical: 8,
     borderRadius: 20,
     backgroundColor: colors.backgroundAlt,
-    borderWidth: 1,
-    borderColor: colors.border,
     marginRight: 8,
-    gap: 6,
   },
   folderChipActive: {
     backgroundColor: colors.primary,
-    borderColor: colors.primary,
   },
   folderChipText: {
     fontSize: 14,
-    fontWeight: '500',
+    fontWeight: '600',
     color: colors.text,
   },
   folderChipTextActive: {
@@ -515,81 +539,38 @@ const styles = StyleSheet.create({
     paddingBottom: 100,
   },
   emptyState: {
-    flex: 1,
-    justifyContent: 'center',
     alignItems: 'center',
     paddingVertical: 60,
   },
   emptyStateText: {
-    fontSize: 18,
+    fontSize: 16,
     fontWeight: '600',
     color: colors.text,
-    marginTop: 16,
+    marginTop: 12,
   },
   emptyStateSubtext: {
     fontSize: 14,
     color: colors.textSecondary,
-    marginTop: 8,
+    marginTop: 4,
     textAlign: 'center',
   },
   noteCard: {
-    backgroundColor: colors.card,
+    backgroundColor: colors.backgroundAlt,
     borderRadius: 12,
     padding: 16,
     marginBottom: 12,
-    borderWidth: 1,
-    borderColor: colors.border,
-    boxShadow: '0px 2px 4px rgba(0, 0, 0, 0.05)',
-    elevation: 1,
-  },
-  noteHeader: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-    marginBottom: 8,
   },
   noteTitle: {
-    fontSize: 18,
+    fontSize: 17,
     fontWeight: '600',
     color: colors.text,
-    flex: 1,
-  },
-  mediaBadge: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    backgroundColor: colors.highlight,
-    paddingHorizontal: 8,
-    paddingVertical: 4,
-    borderRadius: 12,
-    gap: 4,
-  },
-  mediaBadgeText: {
-    fontSize: 12,
-    fontWeight: '600',
-    color: colors.primary,
+    marginBottom: 6,
   },
   noteContent: {
     fontSize: 14,
     color: colors.textSecondary,
     lineHeight: 20,
     marginBottom: 8,
-  },
-  tagsContainer: {
-    flexDirection: 'row',
-    flexWrap: 'wrap',
-    gap: 6,
-    marginBottom: 8,
-  },
-  tag: {
-    backgroundColor: colors.background,
-    paddingHorizontal: 10,
-    paddingVertical: 4,
-    borderRadius: 12,
-  },
-  tagText: {
-    fontSize: 12,
-    color: colors.secondary,
-    fontWeight: '500',
   },
   noteDate: {
     fontSize: 12,
@@ -605,86 +586,77 @@ const styles = StyleSheet.create({
     backgroundColor: colors.primary,
     justifyContent: 'center',
     alignItems: 'center',
-    boxShadow: '0px 4px 12px rgba(99, 102, 241, 0.4)',
-    elevation: 6,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.3,
+    shadowRadius: 8,
+    elevation: 8,
   },
   modalOverlay: {
     flex: 1,
     backgroundColor: 'rgba(0, 0, 0, 0.5)',
-    justifyContent: 'center',
-    alignItems: 'center',
-    padding: 20,
+    justifyContent: 'flex-end',
   },
   modalContent: {
     backgroundColor: colors.backgroundAlt,
-    borderRadius: 16,
-    padding: 24,
-    width: '100%',
-    maxWidth: 400,
+    borderTopLeftRadius: 20,
+    borderTopRightRadius: 20,
+    padding: 20,
+    maxHeight: '50%',
+  },
+  modalContentLarge: {
+    backgroundColor: colors.backgroundAlt,
+    borderTopLeftRadius: 20,
+    borderTopRightRadius: 20,
+    padding: 20,
+    height: '90%',
+  },
+  modalHeader: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    marginBottom: 20,
   },
   modalTitle: {
-    fontSize: 20,
+    fontSize: 22,
     fontWeight: '700',
     color: colors.text,
-    marginBottom: 16,
+  },
+  modalActions: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 16,
+  },
+  deleteButton: {
+    padding: 4,
   },
   input: {
     backgroundColor: colors.background,
-    borderRadius: 8,
-    padding: 12,
+    borderRadius: 10,
+    padding: 14,
     fontSize: 16,
     color: colors.text,
     marginBottom: 12,
-    borderWidth: 1,
-    borderColor: colors.border,
   },
-  textArea: {
-    height: 100,
-    textAlignVertical: 'top',
-  },
-  mediaButton: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'center',
-    backgroundColor: colors.background,
-    borderRadius: 8,
-    padding: 12,
-    marginBottom: 16,
-    gap: 8,
-    borderWidth: 1,
-    borderColor: colors.border,
-  },
-  mediaButtonText: {
-    fontSize: 14,
-    fontWeight: '500',
-    color: colors.primary,
-  },
-  modalButtons: {
-    flexDirection: 'row',
-    gap: 12,
-  },
-  modalButton: {
+  noteInputScroll: {
     flex: 1,
-    paddingVertical: 12,
-    borderRadius: 8,
+    marginBottom: 12,
+  },
+  largeTextArea: {
+    minHeight: 400,
+    textAlignVertical: 'top',
+    fontSize: 17,
+    lineHeight: 24,
+  },
+  primaryButton: {
+    backgroundColor: colors.primary,
+    borderRadius: 10,
+    padding: 16,
     alignItems: 'center',
   },
-  modalButtonCancel: {
-    backgroundColor: colors.background,
-    borderWidth: 1,
-    borderColor: colors.border,
-  },
-  modalButtonCreate: {
-    backgroundColor: colors.primary,
-  },
-  modalButtonText: {
+  primaryButtonText: {
     fontSize: 16,
     fontWeight: '600',
     color: colors.backgroundAlt,
-  },
-  modalButtonTextCancel: {
-    fontSize: 16,
-    fontWeight: '600',
-    color: colors.text,
   },
 });
